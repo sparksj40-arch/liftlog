@@ -1,11 +1,31 @@
 import {HEADER,INBOX,encodeEvent,decodeEvent,inboxItem} from './core.js';
-const ROOT='https://sheets.googleapis.com/v4/spreadsheets';let token='',expiry=0,loading;
+const ROOT='https://sheets.googleapis.com/v4/spreadsheets',SCOPE='https://www.googleapis.com/auth/drive.file';let token='',expiry=0,loading,generation=0,authorizing=false;
 export const authorized=()=>!!token&&Date.now()<expiry;
-export const disconnect=()=>{token='';expiry=0};
+export const disconnect=()=>{token='';expiry=0;generation++;authorizing=false};
+export const authorizationStatus=()=>({authorized:authorized(),authorizing,expiresAt:authorized()?expiry:null});
 function gis(){if(window.google?.accounts?.oauth2)return Promise.resolve();return loading??=new Promise((res,rej)=>{let s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onload=res;s.onerror=()=>{loading=null;s.remove();rej(Error('Google sign-in library unavailable'))};document.head.append(s)})}
 export const prepare=()=>gis();
-export async function authorize(clientId){if(!clientId.endsWith('.apps.googleusercontent.com'))throw Error('Enter a valid Google OAuth web client ID');await gis();return new Promise((resolve,reject)=>{let c=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:'https://www.googleapis.com/auth/drive.file',callback:r=>{if(r.error){reject(Error(r.error));return}token=r.access_token;expiry=Date.now()+(Number(r.expires_in||3600)-60)*1000;resolve()},error_callback:r=>reject(Error(r.type||'Authorization cancelled'))});c.requestAccessToken({prompt:'select_account'})})}
-async function api(path='',method='GET',data){if(!authorized())throw Error('Google authorization expired. Reconnect to sync.');let r=await fetch(ROOT+path,{method,...(typeof AbortSignal.timeout==='function'?{signal:AbortSignal.timeout(25000)}:{}),headers:{Authorization:'Bearer '+token,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});if(r.status===401)disconnect();if(!r.ok){let x=await r.json().catch(()=>({}));throw Error(`Google Sheets ${r.status}: ${x.error?.message||r.statusText}`)}return r.json()}
+export async function authorize(clientId){
+  if(!clientId?.endsWith('.apps.googleusercontent.com'))throw Error('Enter a valid Google OAuth web client ID');
+  if(authorizing)throw Error('Google authorization is already open');
+  const attempt=++generation;authorizing=true;
+  try{
+    await gis();
+    if(attempt!==generation)throw Error('Google authorization cancelled');
+    await new Promise((resolve,reject)=>{
+      const c=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:SCOPE,include_granted_scopes:false,callback:r=>{
+        if(attempt!==generation)return reject(Error('Google authorization cancelled'));
+        if(r.error||!r.access_token)return reject(Error(r.error||'Google did not return an access token'));
+        if(!String(r.scope||'').split(' ').includes(SCOPE))return reject(Error('Required Drive permission not granted'));
+        const seconds=Number(r.expires_in);
+        if(!Number.isFinite(seconds)||seconds<=60)return reject(Error('Google returned an invalid authorization lifetime'));
+        token=r.access_token;expiry=Date.now()+(seconds-60)*1000;resolve();
+      },error_callback:r=>reject(Error(r.type||'Authorization cancelled'))});
+      c.requestAccessToken({prompt:'select_account'});
+    });
+  }finally{if(attempt===generation)authorizing=false}
+}
+async function api(path='',method='GET',data){if(!authorized())throw Error('Google authorization expired. Reconnect to sync.');const usedToken=token;let r=await fetch(ROOT+path,{method,...(typeof AbortSignal.timeout==='function'?{signal:AbortSignal.timeout(25000)}:{}),headers:{Authorization:'Bearer '+usedToken,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});if(r.status===401&&token===usedToken)disconnect();if(!r.ok){let x=await r.json().catch(()=>({}));throw Error(`Google Sheets ${r.status}: ${x.error?.message||r.statusText}`)}return r.json()}
 const range=s=>encodeURIComponent(s);const base=id=>'/'+encodeURIComponent(id);
 export async function createSheet(){let r=await api('','POST',{properties:{title:'LiftLog 2.0 — private database'},sheets:[{properties:{title:'Events',gridProperties:{frozenRowCount:1,columnCount:12,rowCount:1000}}},{properties:{title:'AI Inbox',gridProperties:{frozenRowCount:1,columnCount:7,rowCount:1000}}}]});let id=r.spreadsheetId;await api(base(id)+'/values:batchUpdate','POST',{valueInputOption:'RAW',data:[{range:'Events!A1:L1',values:[HEADER]},{range:"'AI Inbox'!A1:G1",values:[INBOX]}]});return id}
 export async function readSheet(id){let r=await api(base(id)+'/values:batchGet?ranges='+range('Events!A:L')+'&ranges='+range("'AI Inbox'!A:G")+'&valueRenderOption=UNFORMATTED_VALUE');let [a,b]=r.valueRanges.map(x=>x.values||[]);if(JSON.stringify(a[0])!==JSON.stringify(HEADER)||JSON.stringify(b[0])!==JSON.stringify(INBOX))throw Error('Invalid database headers; refusing to write');let remote=a.slice(1).filter(x=>x.length).map(decodeEvent),inbox=[],errors=[];for(let [i,row] of b.slice(1).entries()){if(!row.length)continue;try{inbox.push(inboxItem(row))}catch(e){errors.push('AI Inbox row '+(i+2)+': '+e.message)}}let byId=new Map(),bad=new Set();for(let p of inbox){if(byId.has(p.id)&&JSON.stringify(byId.get(p.id))!==JSON.stringify(p)){bad.add(p.id);errors.push('Conflicting duplicate AI Inbox ID '+p.id)}else byId.set(p.id,p)}return {remote,inbox:[...byId.values()].filter(p=>!bad.has(p.id)),errors}}
@@ -19,4 +39,4 @@ export async function readExtension(id){let r=await api(base(id)+'/values:batchG
 export async function appendExtension(id,events){for(let i=0;i<events.length;i+=50){let values=events.slice(i,i+50).map(encodeExt);await api(base(id)+'/values/'+range("'V21 Records'!A:I")+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS','POST',{majorDimension:'ROWS',values})}}
 
 // Same short-lived drive.file grant; no broader Drive permission or persisted token.
-export async function driveRequest(path,method='GET',data,upload=false){if(!authorized())throw Error('Reconnect Google to access private photo backups');if(!path.startsWith('/files'))throw Error('Unexpected Drive resource');let root=upload?'https://www.googleapis.com/upload/drive/v3':'https://www.googleapis.com/drive/v3';let r=await fetch(root+path,{method,headers:{Authorization:'Bearer '+token,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{}),signal:AbortSignal.timeout(60000)});if(r.status===401)disconnect();if(!r.ok)throw Error('Google Drive '+r.status+': '+(await r.json().catch(()=>({}))).error?.message);return r.json()}
+export async function driveRequest(path,method='GET',data,upload=false){if(!authorized())throw Error('Reconnect Google to access private photo backups');if(!path.startsWith('/files'))throw Error('Unexpected Drive resource');const usedToken=token;let root=upload?'https://www.googleapis.com/upload/drive/v3':'https://www.googleapis.com/drive/v3';let r=await fetch(root+path,{method,headers:{Authorization:'Bearer '+usedToken,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{}),signal:AbortSignal.timeout(60000)});if(r.status===401&&token===usedToken)disconnect();if(!r.ok)throw Error('Google Drive '+r.status+': '+(await r.json().catch(()=>({}))).error?.message);return r.json()}
