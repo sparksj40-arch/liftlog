@@ -11,6 +11,40 @@ export function saveNote(db,n,at=C.now()){if(!n.title?.trim()||!Array.isArray(n.
 export function reminderActive(db,r){if(r.disabled)return false;let n=notes(db).find(n=>n.id===r.noteId);if(!n)return false;let es=r.entryIds.length?n.entries.filter(e=>r.entryIds.includes(e.id)):n.entries;if(r.entryIds.length&&!es.length)return false;return !(r.untilComplete&&es.some(e=>e.kind==='task')&&es.filter(e=>e.kind==='task').every(e=>e.done))}
 export function saveReminder(db,r){if(!notes(db).some(n=>n.id===r.noteId)||!Array.isArray(r.entryIds)||!r.dates.length||r.dates.some(d=>!C.isDate(d))||!/^([01]\d|2[0-3]):[0-5]\d$/.test(r.time)||!Number.isInteger(r.early)||r.early<0||r.early>1440||!['once','daily','weekly','weekdays'].includes(r.repeat))throw Error('Invalid reminder');X.saveExt(db,'planner:reminder:'+r.id,{...r,dates:[...new Set(r.dates)].sort()})}
 export function occurs(r,date){return r.dates.some(d=>{if(d===date)return true;if(date<d)return false;if(r.repeat==='daily')return true;if(r.repeat==='weekdays')return C.weekday(date)>0&&C.weekday(date)<6;if(r.repeat==='weekly')return C.weekday(d)===C.weekday(date);return false})}
+// Email evidence is not permission to change a user's cancellation decision.
+export function subscriptionCandidate(db,payload,{base=null,proposalId=null}={}){
+  if(!payload||typeof payload!=='object'||Array.isArray(payload))throw Error('Invalid subscription candidate');
+  const textFields=['company','description','currency','frequency','start','renewal','trialEnd','promoEnd','deadline','instructions'];
+  if(typeof payload.company!=='string'||!payload.company.trim())throw Error('Candidate needs a company name');
+  for(const k of textFields)if(payload[k]!=null&&typeof payload[k]!=='string')throw Error('Invalid candidate '+k);
+  if(payload.amount!=null&&(!Number.isFinite(payload.amount)||payload.amount<0))throw Error('Invalid candidate amount');
+  if(payload.currency&& !/^[A-Z]{3}$/.test(payload.currency))throw Error('Invalid candidate currency');
+  if(payload.frequency&&!['weekly','monthly','quarterly','annual','other','unknown'].includes(payload.frequency))throw Error('Invalid candidate frequency');
+  for(const k of ['start','renewal','trialEnd','promoEnd','deadline'])if(payload[k]&&!C.isDate(payload[k]))throw Error('Invalid candidate '+k);
+  if(!Array.isArray(payload.sources)||!payload.sources.length||payload.sources.some(s=>typeof s!=='string'||!s.trim()))throw Error('Candidate needs source email references');
+  if(payload.id!=null&&(typeof payload.id!=='string'||!payload.id))throw Error('Invalid candidate record ID');
+  const sources=[...new Set(payload.sources.map(s=>s.trim()))],all=subscriptions(db);
+  const matches=all.filter(s=>s.id===payload.id||(s.sources??[]).some(x=>sources.includes(x)));
+  if(matches.length>1)throw Error('Candidate matches multiple subscriptions; review sources before importing');
+  const existing=matches[0];
+  if(payload.id&&existing?.id!==payload.id)throw Error('Candidate references an unknown or conflicting subscription');
+  const current=existing?X.replayExt(X.initExt(db).events).heads.get('subscription:record:'+existing.id)?.id??'':'';
+  if(base!==null&&base!==current)throw Error('Subscription revision changed; request a revised candidate');
+  const draft=existing?C.clone(existing):{id:C.uid(),company:'',description:'',amount:null,currency:'',frequency:'unknown',status:'verification',intent:'later',start:'',renewal:'',trialEnd:'',promoEnd:'',deadline:'',cancelDate:'',instructions:'',sources:[],reminderDays:[14,7,3,2,1,0]};
+  for(const k of textFields){
+    const value=payload[k];
+    if(typeof value!=='string'||!value.trim()||(k==='frequency'&&value==='unknown'))continue;
+    // An uncertain new deadline must not postpone an existing protective cutoff.
+    if(k==='deadline'&&draft.deadline&&value>draft.deadline)continue;
+    draft[k]=value.trim();
+  }
+  if(payload.amount!=null){if(existing&&payload.currency&&existing.currency!==payload.currency)draft.amount=payload.amount;else if(payload.currency||existing?.currency)draft.amount=payload.amount;}
+  if(existing&&payload.currency&&payload.currency!==existing.currency&&payload.amount==null){draft.currency=existing.currency;}
+  draft.sources=[...new Set([...(existing?.sources??[]),...sources])];
+  delete draft.proposalId;
+  if(proposalId)draft.proposalId=proposalId;
+  return {draft,base:current,existing:!!existing,possibleDuplicate:!existing&&all.some(s=>normalizeService(s.company)===normalizeService(draft.company)),evidenceStatus:typeof payload.status==='string'?payload.status:'unknown'};
+}
 export function normalizeService(s){return s.trim().toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()}
 export function saveSubscription(db,s){if(!s.company?.trim()||!['active','trial','cancelled','verification'].includes(s.status)||!['indefinite','trial','one-period','months','date','later'].includes(s.intent)||!['weekly','monthly','quarterly','annual','other','unknown'].includes(s.frequency)||s.amount!==null&&(!Number.isFinite(s.amount)||s.amount<0)||!/^([A-Z]{3})$/.test(s.currency))throw Error('Invalid subscription');for(let k of ['start','renewal','trialEnd','promoEnd','deadline','cancelDate'])if(s[k]&&!C.isDate(s[k]))throw Error('Invalid '+k);let old=X.getExt(db,'subscription:record:'+s.id);let duplicate=subscriptions(db).find(v=>v.id!==s.id&&(v.sources??[]).some(x=>(s.sources??[]).includes(x)));if(duplicate)throw Error('Source email already belongs to '+duplicate.company);let v={...C.clone(s),createdAt:old?.createdAt||C.now(),updatedAt:C.now()};X.saveExt(db,'subscription:record:'+v.id,v);return v}
 export function cancellationDate(s){if(s.status==='cancelled'||['indefinite','later'].includes(s.intent))return '';let target=s.cancelDate||(s.intent==='trial'?s.trialEnd:s.intent==='one-period'?s.renewal:'');if(!target)return '';return s.deadline&&s.deadline<target?s.deadline:target}
