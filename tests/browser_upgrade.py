@@ -1,7 +1,6 @@
 """Exercise the actual production baseline and development build on a temporary localhost origin.
 No real account, data, installed app, or production service is used.
 """
-import functools
 import http.server
 import json
 import os
@@ -15,8 +14,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BASE = "9afb6d5c37ae3a758599dcd2e81a92490c04b0b8"
 
 class Handler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(self.server.source), **kwargs)
+    def __init__(self, request, client_address, server):
+        super().__init__(request, client_address, server, directory=str(server.source))
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
