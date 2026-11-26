@@ -36,14 +36,16 @@ export function subscriptionCandidate(db,payload,{base=null,proposalId=null}={})
     if(typeof value!=='string'||!value.trim()||(k==='frequency'&&value==='unknown'))continue;
     // An uncertain new deadline must not postpone an existing protective cutoff.
     if(k==='deadline'&&draft.deadline&&value>draft.deadline)continue;
+    if(existing&&((k==='trialEnd'&&existing.intent==='trial')||(k==='renewal'&&existing.intent==='one-period'))&&draft[k]&&value>draft[k])continue;
     draft[k]=value.trim();
   }
-  if(payload.amount!=null){if(existing&&payload.currency&&existing.currency!==payload.currency)draft.amount=payload.amount;else if(payload.currency||existing?.currency)draft.amount=payload.amount;}
+  if(payload.amount!=null&&payload.currency)draft.amount=payload.amount;
+  if(!existing&&payload.amount!=null&&!payload.currency)draft.amount=payload.amount;
   if(existing&&payload.currency&&payload.currency!==existing.currency&&payload.amount==null){draft.currency=existing.currency;}
   draft.sources=[...new Set([...(existing?.sources??[]),...sources])];
   delete draft.proposalId;
   if(proposalId)draft.proposalId=proposalId;
-  return {draft,base:current,existing:!!existing,possibleDuplicate:!existing&&all.some(s=>normalizeService(s.company)===normalizeService(draft.company)),evidenceStatus:typeof payload.status==='string'?payload.status:'unknown'};
+  return {draft,base:current,existing:!!existing,possibleDuplicate:!existing&&all.some(s=>normalizeService(s.company)===normalizeService(draft.company)),evidenceStatus:typeof payload.status==='string'?payload.status:'unknown',evidence:C.clone(Object.fromEntries([...textFields,'amount','status'].filter(k=>Object.hasOwn(payload,k)).map(k=>[k,payload[k]])))};
 }
 export function normalizeService(s){return s.trim().toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()}
 export function saveSubscription(db,s){if(!s.company?.trim()||!['active','trial','cancelled','verification'].includes(s.status)||!['indefinite','trial','one-period','months','date','later'].includes(s.intent)||!['weekly','monthly','quarterly','annual','other','unknown'].includes(s.frequency)||s.amount!==null&&(!Number.isFinite(s.amount)||s.amount<0)||!/^([A-Z]{3})$/.test(s.currency))throw Error('Invalid subscription');for(let k of ['start','renewal','trialEnd','promoEnd','deadline','cancelDate'])if(s[k]&&!C.isDate(s[k]))throw Error('Invalid '+k);let old=X.getExt(db,'subscription:record:'+s.id);let duplicate=subscriptions(db).find(v=>v.id!==s.id&&(v.sources??[]).some(x=>(s.sources??[]).includes(x)));if(duplicate)throw Error('Source email already belongs to '+duplicate.company);let v={...C.clone(s),createdAt:old?.createdAt||C.now(),updatedAt:C.now()};X.saveExt(db,'subscription:record:'+v.id,v);return v}
