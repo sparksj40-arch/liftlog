@@ -6,7 +6,7 @@ threading.Thread(target=server.serve_forever,daemon=True).start()
 url=f'http://127.0.0.1:{server.server_port}/'
 with sync_playwright() as p:
  b=p.chromium.launch(executable_path=os.environ.get('CHROMIUM_PATH') or None); page=b.new_page(viewport={'width':390,'height':844},service_workers='block');
-  errors=[]; dialogs=[];page.on('pageerror',lambda e:errors.append(str(e)));page.on('dialog',lambda d:(dialogs.append(d.message),d.accept()))
+ errors=[]; dialogs=[];page.on('pageerror',lambda e:errors.append(str(e)));page.on('dialog',lambda d:(dialogs.append(d.message),d.accept()))
  page.goto(url);page.get_by_role('heading',name='Personal dashboard').wait_for();print('PASS dashboard')
  page.get_by_role('button',name='Measurements Check-ins and history').click();page.locator('#assessment-date').fill('2026-11-29');page.locator('#assessment-date').dispatch_event('change');
  page.locator('[data-x="measurement-skip"][data-id="back"]').click();page.locator('[data-x="measurement-undo"][data-id="back"]').wait_for();page.locator('[data-x="measurement-undo"][data-id="back"]').click();page.locator('[data-x="measurement-skip"][data-id="back"]').wait_for();print('PASS skip and undo')
