@@ -27,7 +27,7 @@ def state(page):
     return page.evaluate("""async () => (await import('./storage.js')).load()""")
 
 def wait_saved(page):
-    page.locator("#status").get_by_text("Saved locally", exact=True).wait_for()
+    page.wait_for_function("document.getElementById('status')?.textContent === 'Saved locally'")
 
 def ready_worker(page):
     page.wait_for_function("navigator.serviceWorker.controller !== null")
@@ -124,7 +124,14 @@ with tempfile.TemporaryDirectory(prefix="liftlog-upgrade-") as tmp:
             recovered=clean.new_page()
             recovered.set_default_timeout(15000)
             recovered.on("pageerror",lambda e: errors.append(str(e)))
-            recovered.on("dialog",lambda d: d.accept())
+            recovery_dialogs=[]
+            def handle_dialog(d):
+                recovery_dialogs.append(d.message)
+                if d.type=="confirm" and d.message.startswith("Merge backup with local data?"):
+                    d.accept()
+                else:
+                    d.dismiss()
+            recovered.on("dialog",handle_dialog)
             recovered.goto(url)
             recovered.get_by_role("heading",name="Personal dashboard").wait_for()
             wait_saved(recovered)
@@ -137,10 +144,11 @@ with tempfile.TemporaryDirectory(prefix="liftlog-upgrade-") as tmp:
             assert restored["extension"]["events"]==data["extension"]["events"]
             print("PASS recovery in clean browser context")
             recovered.locator("#import-file").set_input_files(backup)
-            recovered.get_by_role("heading",name="Synthetic planned workout").wait_for()
+            recovered.locator("#toast").get_by_text("Backup merged: 0 workout revisions, 0 other revisions",exact=True).wait_for()
             wait_saved(recovered)
             assert state(recovered)["events"]==data["events"]
             print("PASS repeated backup import does not duplicate history")
+            assert len(recovery_dialogs)==2 and all(x.startswith("Merge backup with local data?") for x in recovery_dialogs), recovery_dialogs
             assert not errors, errors
             browser.close()
     finally:
