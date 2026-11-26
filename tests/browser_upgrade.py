@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import tempfile
 import threading
+import time
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -26,11 +27,32 @@ def state(page):
     return page.evaluate("""async () => (await import('./storage.js')).load()""")
 
 def wait_saved(page):
-    page.wait_for_function("document.getElementById('status')?.textContent === 'Saved locally'")
+    page.get_by_text("Saved locally", exact=True).wait_for()
+
+def worker_state(page):
+    return page.evaluate("""async () => {
+        const r = await navigator.serviceWorker.getRegistration();
+        return {
+            controlled: !!navigator.serviceWorker.controller,
+            installing: r?.installing?.state ?? null,
+            waiting: r?.waiting?.state ?? null,
+            active: r?.active?.state ?? null,
+            caches: await caches.keys()
+        };
+    }""")
+
+def wait_worker(page, predicate, description):
+    deadline = time.monotonic() + 20
+    while True:
+        status = worker_state(page)
+        if predicate(status):
+            return status
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{description}: {status}")
+        time.sleep(0.1)
 
 def ready_worker(page):
-    page.wait_for_function("navigator.serviceWorker.controller !== null")
-    return page.evaluate("navigator.serviceWorker.ready.then(r => r.active.state)")
+    return wait_worker(page, lambda s: s["controlled"] and s["active"] == "activated", "Service worker did not activate")
 
 with tempfile.TemporaryDirectory(prefix="liftlog-upgrade-") as tmp:
     baseline = pathlib.Path(tmp) / "baseline"
@@ -48,7 +70,9 @@ with tempfile.TemporaryDirectory(prefix="liftlog-upgrade-") as tmp:
             page = context.new_page()
             page.set_default_timeout(15000)
             errors = []
-            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.on("pageerror", lambda e: (errors.append(str(e)), print("BROWSER ERROR:",e,flush=True)))
+            page.on("console", lambda m: print("BROWSER CONSOLE:",m.text,flush=True) if m.type=="error" else None)
+            page.on("response", lambda r: print("HTTP ERROR:",r.status,r.url,flush=True) if r.status>=400 else None)
             # Construct deterministic synthetic history using the real V2.0 data model.
             page.goto(url)
             wait_saved(page)
@@ -76,7 +100,7 @@ with tempfile.TemporaryDirectory(prefix="liftlog-upgrade-") as tmp:
             # Serve development source from exactly the same isolated origin.
             server.source=ROOT
             page.evaluate("""async () => {const r=await navigator.serviceWorker.getRegistration();await r.update()}""")
-            page.wait_for_function("navigator.serviceWorker.getRegistration().then(r => !!r.waiting)")
+            wait_worker(page, lambda s: s["waiting"] == "installed", "Updated service worker did not install")
             page.evaluate("""async () => {
                 const r=await navigator.serviceWorker.getRegistration();
                 await new Promise((resolve,reject)=>{
