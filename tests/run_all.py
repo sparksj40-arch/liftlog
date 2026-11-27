@@ -5,7 +5,7 @@ import sys
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 checks=[
-    ("JavaScript syntax", ["node","--check"], sorted(ROOT.glob("*.js"))),
+    ("JavaScript syntax", ["node","--check"], sorted(ROOT.glob("*.js"))+sorted((ROOT/"tests").glob("*.js"))),
     ("Node regression tests", ["node","--test"], [sorted((ROOT/"tests").glob("*.test.js"))]),
     ("Browser smoke", [sys.executable,"-u"], [ROOT/"tests/browser_smoke.py"]),
     ("Browser upgrade and recovery", [sys.executable,"-u"], [ROOT/"tests/browser_upgrade.py"]),
