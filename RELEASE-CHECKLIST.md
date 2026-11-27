@@ -1,26 +1,22 @@
-# V2.1 release gates — November 26, 2026
+# V2.1 release gates — November 27, 2026
 
-Production main must not be changed without explicit approval. Test only with isolated synthetic resources, never the live Sheet. No personal backups, credentials, photos or calendar IDs in the public repository. OMEN remains independent.
+Production main remains unchanged. Do not merge, change Pages source, or deploy without explicit owner approval and a private backup. No OMEN involvement.
 
-## Completed verification
-- [x] 666e65e: JS syntax; 38 regression, 12 browser smoke, 6 upgrade/recovery checks on laptop.
-- [x] 37e14b0: isolated live Sheets authorization, correct headers, exact append/readback and clean database merge.
-- [x] 37e14b0: real private Drive backup and restore; owner/permission checks and exact bytes.
-- [x] 37e14b0: real Calendar authorization, creation, idempotence and completion cancellation.
-- [x] 37e14b0: pinned OCR assets installed; actual recognition of synthetic printed English image.
-- [x] Test OAuth origin and Google Calendar API configured. Do not remove the existing production OAuth origin.
+## Verified
+- [x] a45cc7e: owner laptop, JS syntax, 46/46 Node regression checks, 13/13 Chromium smoke checks, 6/6 actual service-worker upgrade/recovery checks. Synthetic history, active workouts, offline edits, backup recovery and repeated-import deduplication preserved.
+- [x] 7f21134: live Sheets/Drive/Calendar and printed OCR checks repeated successfully on laptop using isolated test resources.
+- [x] 7f21134: real Gmail read-only authorization and verified mailbox; one recent search page, 12 examined, one candidate, no saved subscription or email changes.
+- [x] a45cc7e: synthetic Gmail and connector review UI, explicit matching, preserved user choices, rejection and reload deduplication.
+- [x] Earlier e418592 CI verified OCR assets, actual OCR and static package. Latest release candidate must independently pass packaging CI.
+- [x] Actual ChatGPT connector synthetic proposal append/readback in separate test spreadsheet; no production write.
 
-## Remaining before release decision
-- [ ] Include generated OCR assets and licenses in static production package. Verify manifest hashes and GitHub size limits. Do not include a local virtualenv, logs, backups, private IDs or tokens. No hosting change needed when assets are checked in to the existing Pages source.
-- [ ] Verify actual ChatGPT connector proposal path with a synthetic record in the separate test sheet, then verify app review. Do not use live user data.
-- [ ] One consolidated phone acceptance session: real phone and laptop sync using separate test sheet, reminder delivery while app is closed (early + scheduled, then cancellation), Android text/URL sharing, optional photo restore. Do not infer phone delivery from Calendar API success.
-- [ ] Decide whether to release PWA with session-only Google authorization and Samsung keyboard handwriting fallback or defer for separate secure backend/native integration. Do not assume approval for OMEN or any additional server.
-- [ ] Obtain explicit authorization before scanning Gmail; validate discovery and proposal deduplication, then scheduled automation permissions. Automatic scan not currently active.
-- [ ] Back up real app database privately, confirm current main and development branch heads, retain rollback commit, review outstanding scope and obtain explicit deployment approval.
-- [ ] After authorized deployment: verify GitHub Pages and in-place upgrade, confirm original history and sync, enable V21 workflow only after schema verified. Update project operating instructions. Remove temporary test OAuth origin if no longer needed; preserve production origin.
+## Remaining
+- [ ] Verify latest GitHub Actions build and static artifact including Gmail module.
+- [ ] Isolated laptop/Android acceptance: same test Sheet, sync synthetic records both directions; installed app sharing text/URL; calendar notifications with app closed, completion removes reminder. Never enter production Sheet ID in localhost test.
+- [ ] Confirm release scope: session-only Google grants, printed OCR and Samsung keyboard transcription fallback. Gmail parser is conservative and not AI; pending candidates and scan checkpoint remain device-local; approved records sync. History is bounded per scan and may be incomplete.
+- [ ] Private production JSON backup; confirm rollback baseline and explicit release approval.
+- [ ] Owner-approved Pages source change to GitHub Actions if needed; merge approved development branch; manually dispatch verified production workflow with confirmation. Verify production upgrade and Google sync.
+- [ ] Once app Gmail discovery verified in production, disable redundant scheduled ChatGPT subscription discovery task(s). Do not modify unrelated reminders.
+- [ ] Delete synthetic test calendars manually and optionally remove test-only Sheets/Drive files. Remove temporary OAuth origin only when testing is over.
 
-## Limits
-Real API tests passed with synthetic records; not equivalent to a live two-device UI session or actual phone notifications. Google session tokens expire; Calendar mirror covers next 60 days and needs successful sync. OCR is printed English and requires packaged assets, not a handwriting engine. Native S Pen gestures, persistent Google refresh authorization, continuous automatic photo sync, Gmail automation and Samsung Health reconciliation are not complete. No production writes, no automatic Gmail access from the PWA, no advanced encryption or Picture Vault.
-
-## Cleanup
-Stop temporary localhost server with Ctrl+C. Delete the test-only calendar to avoid synthetic notifications. Retain or manually delete test-only Sheet and photo backup after verification. Never delete production resources.
+No production deployment yet. No continuous refresh tokens, advanced S Pen gestures, automated photo sync, advanced encryption, or automatic Samsung Health reconciliation. Phone reminder delivery is not implied by passing Calendar API tests.
