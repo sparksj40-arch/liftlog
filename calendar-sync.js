@@ -1,0 +1,31 @@
+// Optional one-way mirror to a dedicated app-created calendar. No secrets persisted.
+import * as C from './core.js';
+import * as P from './planner.js';
+import {prepare} from './cloud.js';
+export const SCOPE='https://www.googleapis.com/auth/calendar.app.created';
+const ROOT='https://www.googleapis.com/calendar/v3', MARK='personal-dashboard-v21';
+let token='', expiry=0, generation=0, authorizing=false;
+export const authorized=()=>!!token&&Date.now()<expiry;
+export const disconnect=()=>{token='';expiry=0;generation++;authorizing=false};
+export const authorizationStatus=()=>({authorized:authorized(),authorizing,expiresAt:authorized()?expiry:null});
+export async function authorize(clientId){
+ if(!clientId?.endsWith('.apps.googleusercontent.com'))throw Error('Configure Google client ID in Settings first');
+ if(authorizing)throw Error('Calendar authorization already open');
+ const attempt=++generation;authorizing=true;
+ try{await prepare();if(attempt!==generation)throw Error('Calendar authorization cancelled');
+ await new Promise((resolve,reject)=>{const client=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:SCOPE,include_granted_scopes:false,callback:r=>{
+ if(attempt!==generation)return reject(Error('Calendar authorization cancelled'));
+ if(r.error||!r.access_token)return reject(Error(r.error||'Missing token'));
+ if(!String(r.scope||'').split(' ').includes(SCOPE))return reject(Error('Calendar permission not granted'));
+ const seconds=Number(r.expires_in);if(!Number.isFinite(seconds)||seconds<=60)return reject(Error('Invalid Calendar authorization lifetime'));
+ token=r.access_token;expiry=Date.now()+(seconds-60)*1000;resolve()
+ },error_callback:r=>reject(Error(r.type||'Calendar authorization cancelled'))});client.requestAccessToken({prompt:'select_account'})})
+ }finally{if(attempt===generation)authorizing=false}
+}
+async function api(path,method='GET',body){if(!authorized())throw Error('Calendar authorization expired; reconnect');const usedToken=token;let r=await fetch(ROOT+path,{method,headers:{Authorization:'Bearer '+usedToken,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(25000)});if(r.status===401&&token===usedToken)disconnect();if(!r.ok){let j=await r.json().catch(()=>({}));throw Error('Calendar '+r.status+': '+(j.error?.message||r.statusText))}return r.status===204?{}:r.json()}
+export async function createCalendar(zone,summary='Personal Dashboard reminders'){let r=await api('/calendars','POST',{summary,description:'Generic reminders managed by Personal Dashboard. No note or subscription contents.',timeZone:zone});if(!r.id||r.id==='primary')throw Error('Unexpected calendar ID');return r.id}
+export function desiredEvents(db,start,days,base,zone){if(!C.isDate(start)||!Number.isInteger(days)||days<1||days>90||!zone)throw Error('Invalid calendar window');let origin=new URL(base);if(!['https:','http:'].includes(origin.protocol))throw Error('Invalid dashboard link');origin.search='';origin.hash='';let result=new Map();for(let i=0;i<days;i++){let date=C.addDays(start,i);for(let r of P.calendarEntries(db,date)){let key=date+'|'+r.id+'|'+r.time;let link=origin.href+'#'+(r.noteId?'note='+encodeURIComponent(r.noteId):r.subscriptionId?'subscription='+encodeURIComponent(r.subscriptionId):'measurements');let time=date+'T'+r.time+':00', d=new Date(time+'Z');d.setUTCMinutes(d.getUTCMinutes()+5);let end=d.toISOString().slice(0,19);result.set(key,{summary:r.label,description:link,visibility:'private',transparency:'transparent',start:{dateTime:time,timeZone:zone},end:{dateTime:end,timeZone:zone},reminders:{useDefault:false,overrides:[...new Set([r.early,0])].map(minutes=>({method:'popup',minutes}))},extendedProperties:{private:{dashboardOwner:MARK,dashboardKey:key}}})}}return result}
+const stamp=v=>String(v||'').slice(0,19);
+function same(a,b){return a.summary===b.summary&&a.description===b.description&&a.visibility===b.visibility&&a.transparency===b.transparency&&stamp(a.start?.dateTime)===stamp(b.start.dateTime)&&stamp(a.end?.dateTime)===stamp(b.end.dateTime)&&a.start?.timeZone===b.start.timeZone&&a.end?.timeZone===b.end.timeZone&&a.reminders?.useDefault===false&&JSON.stringify((a.reminders.overrides||[]).map(x=>x.method+':'+x.minutes).sort())===JSON.stringify(b.reminders.overrides.map(x=>x.method+':'+x.minutes).sort())}
+export function reconcile(desired,remote,start){let creates=[],updates=[],deletes=[],seen=new Set();for(let r of remote){let p=r.extendedProperties?.private;if(p?.dashboardOwner!==MARK||!p.dashboardKey||!r.id||r.status==='cancelled')continue;let key=p.dashboardKey;if(key.slice(0,10)<start)continue;if(!desired.has(key)||seen.has(key)){deletes.push(r.id);continue}seen.add(key);let wanted=desired.get(key);if(!same(r,wanted))updates.push([r.id,wanted])}for(let [key,wanted] of desired)if(!seen.has(key))creates.push(wanted);return {creates,updates,deletes}}
+export async function mirror(id,db,start,base,zone,request=api){if(!id||id==='primary')throw Error('Create a dedicated calendar first');let path='/calendars/'+encodeURIComponent(id)+'/events',remote=[],next;do{let q=new URLSearchParams({privateExtendedProperty:'dashboardOwner='+MARK,maxResults:'2500',showDeleted:'false'});if(next)q.set('pageToken',next);let r=await request(path+'?'+q);remote.push(...(r.items||[]));next=r.nextPageToken}while(next);let plan=reconcile(desiredEvents(db,start,60,base,zone),remote,start);for(let [eventId,data] of plan.updates)await request(path+'/'+encodeURIComponent(eventId),'PATCH',data);for(let eventId of plan.deletes)await request(path+'/'+encodeURIComponent(eventId),'DELETE');for(let data of plan.creates)await request(path,'POST',data);return {created:plan.creates.length,updated:plan.updates.length,removed:plan.deletes.length,through:C.addDays(start,59)}}

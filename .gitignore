@@ -1,0 +1,10 @@
+# Generated build output, development environment and private exports
+ocr-assets/
+_site/
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+*.log
+*.zip
