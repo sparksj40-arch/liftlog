@@ -7,14 +7,15 @@ export const SCOPE='https://www.googleapis.com/auth/gmail.readonly';
 const ROOT='https://gmail.googleapis.com/gmail/v1/users/me',DAY=86400000,OVERLAP=7*DAY,PAGE=25;
 const QUERY='-in:spam -in:trash {subject:subscription subject:renewal subject:trial subject:membership subject:receipt subject:invoice subject:payment subject:billing subject:canceled subject:cancelled subject:renewed "auto-renewing subscription" "automatically renew" "recurring payment" "trial will end" "payment declined" "next billing"}';
 let token='',expiry=0,generation=0,authorizing=false,account='';
-export const authorized=()=>!!token&&Date.now()<expiry;
+const tokenValid=()=>!!token&&Date.now()<expiry;
+export const authorized=()=>tokenValid()&&!!account;
 export const authorizationStatus=()=>({authorized:authorized(),authorizing,account:authorized()?account:''});
 export const disconnect=()=>{generation++;token='';expiry=0;account='';authorizing=false};
 export function state(db){return X.initExt(db).gmail??={enabled:false,account:'',pending:[],seen:[],lastSuccess:null,recent:null,history:null,historyDone:false}}
 export function reset(db){disconnect();delete X.initExt(db).gmail;return state(db)}
 export function due(db,now=Date.now()){let s=state(db);return s.enabled&&(!s.lastSuccess||now-Date.parse(s.lastSuccess)>=DAY||!!s.recent)}
 async function api(path){
- if(!authorized())throw Error('Reconnect Gmail; authorization expired');
+ if(!tokenValid())throw Error('Reconnect Gmail; authorization expired');
  if(!/^\/(?:profile|messages(?:\/[A-Za-z0-9_-]+)?(?:\?|$))/.test(path))throw Error('Unexpected Gmail resource');
  const used=token;
  let r=await fetch(ROOT+path,{method:'GET',headers:{Authorization:'Bearer '+used},signal:AbortSignal.timeout(25000),cache:'no-store',redirect:'error'});
@@ -86,7 +87,7 @@ export function candidate(m){
  let p=price(t),trialEnd=dateAfter(t,'(?:your |free )?trial (?:will end|ends|expires|will expire)'),renewal=dateAfter(t,'(?:next (?:renewal|billing date|payment)|(?:subscription|membership) (?:will renew|renews)|automatically (?:renewed|charged))'),deadline=dateAfter(t,'cancel (?:by|before)|cancellation deadline'),start=dateAfter(t,'(?:order date|trial start(?:ed)?|subscription start(?:ed)?)');
  if(trial&&trialEnd&&!renewal&&/automatically charged/i.test(t))renewal=trialEnd;
  if(!company)return null;
- let at=Number(m.internalDate),createdAt=Number.isFinite(at)&&at>0?new Date(at).toISOString():new Date().toISOString();
+ let at=Number(m.internalDate),createdAt=Number.isFinite(at)&&at>0&&at<=8640000000000000?new Date(at).toISOString():new Date().toISOString();
  const payload={company,description,amount:p.amount,currency:p.currency,frequency:p.frequency,status,start,renewal,trialEnd,promoEnd:'',deadline,instructions:play?'Manage in Google Play subscriptions.':'',sources:['gmail:'+m.id]};
  const explanation=clean(status+' · '+subject+(p.display?' · '+p.display:' · recurring amount unknown')+(p.amount!==null&&!p.currency?' · verify currency':'')+(trialEnd?' · trial ends '+trialEnd:'')+(renewal?' · renewal '+renewal:'')+' · verify against original email; no intent inferred.',500);
  return {id:'gmail-'+m.id,createdAt,kind:'subscription',base:null,payload,explanation,approval:'PENDING',local:true,messageId:m.id};
@@ -100,7 +101,7 @@ export async function scan(db,{request=api,now=Date.now(),force=false,maxPages=4
  if(!force&&!due(db,now)&&s.historyDone)return {skipped:true};
  if(!Number.isInteger(maxPages)||maxPages<1||maxPages>20)throw Error('Invalid scan page limit');
  let previous=s.lastSuccess?Date.parse(s.lastSuccess):now;
- if(!s.recent&&(force||due(db,now)||!s.history))s.recent={after:Math.floor(Math.min(now-OVERLAP,previous-OVERLAP)/1000),before:Math.floor(now/1000)+1,token:''};
+ if(!s.recent&&(force||due(db,now)))s.recent={after:Math.floor(Math.min(now-OVERLAP,previous-OVERLAP)/1000)-1,before:Math.floor(now/1000)+1,token:''};
  if(!s.history&&!s.historyDone)s.history={before:s.recent?.after??Math.floor((now-OVERLAP)/1000),token:''};
  let examined=0,added=0,pages=0,seen=new Set(s.seen);
  s.pending=pending(db);
@@ -126,7 +127,7 @@ export async function scan(db,{request=api,now=Date.now(),force=false,maxPages=4
   // If queue is full, leave cursor on this page until the user reviews candidates.
   if(s.pending.length<300){
    cursor.token=String(list.nextPageToken||'');
-   if(!cursor.token){if(isRecent){s.lastSuccess=new Date(now).toISOString();s.recent=null}else{s.history=null;s.historyDone=true}}
+   if(!cursor.token){if(isRecent){s.lastSuccess=new Date((cursor.before-1)*1000).toISOString();s.recent=null}else{s.history=null;s.historyDone=true}}
   }
   pages++;await checkpoint();progress({examined,added,pages,historyDone:s.historyDone,recentDone:!s.recent});
  }
