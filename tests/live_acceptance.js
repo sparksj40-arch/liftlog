@@ -4,8 +4,9 @@ import * as P from '../planner.js';
 import * as G from '../cloud.js';
 import * as GC from '../calendar-sync.js';
 import * as M from '../media-backup.js';
+import * as GD from '../gmail-discovery.js';
 import {recognizePhoto} from '../ocr.js';
-const $=id=>document.getElementById(id),results=$('result'),buttons=['sheets','calendar','ocr'].map($);
+const $=id=>document.getElementById(id),results=$('result'),buttons=['sheets','calendar','ocr','gmail'].map($);
 const log=(text)=>{results.textContent+=text+'\n';};
 const require=(ok,message)=>{if(!ok)throw Error(message)};
 const local=['localhost','127.0.0.1'].includes(location.hostname)&&location.port==='8765';
@@ -65,10 +66,21 @@ async function ocr(){
  log('PASS recognized synthetic printed English text locally');
  $('ready').textContent='Ready';
 }
+async function gmail(){
+ const d=C.newDB(),s=GD.state(d);
+ try{
+  s.account=await GD.authorize(client());s.enabled=true;log('PASS Gmail read-only consent and verified mailbox');
+  const a=await GD.scan(d,{force:true,maxPages:1});
+  require(a.pages===1,'No Gmail search page checked');
+  require(P.subscriptions(d).length===0&&X.initExt(d).events.length===0,'Unreviewed email unexpectedly became a record');
+  log('PASS real Gmail list and read: '+a.examined+' examined, '+a.added+' candidate(s); no saved records or email changes');
+  log('This check intentionally reads at most one page and discards the local test state.');
+ }finally{GD.disconnect()}
+}
 $('copy').onclick=async()=>{try{await navigator.clipboard.writeText(results.textContent);$('ready').textContent='Copied results'}catch{alert('Select and copy the result text manually.')}};
 if(!local){$('ready').textContent='Blocked: use the isolated localhost server on port 8765.'}
 else{
- $('sheets').onclick=()=>run($('sheets'),sheetDrive);$('calendar').onclick=()=>run($('calendar'),calendar);$('ocr').onclick=()=>run($('ocr'),ocr);
+ $('sheets').onclick=()=>run($('sheets'),sheetDrive);$('calendar').onclick=()=>run($('calendar'),calendar);$('ocr').onclick=()=>run($('ocr'),ocr);$('gmail').onclick=()=>run($('gmail'),gmail);
  $('ocr').disabled=false;
- G.prepare().then(()=>{$('ready').textContent='Ready for Google consent';$('sheets').disabled=false;$('calendar').disabled=false}).catch(e=>{log('Google sign-in library unavailable: '+e.message);$('ready').textContent='OCR test remains available; reload to retry Google'});
+ G.prepare().then(()=>{$('ready').textContent='Ready for Google consent';$('sheets').disabled=false;$('calendar').disabled=false;$('gmail').disabled=false}).catch(e=>{log('Google sign-in library unavailable: '+e.message);$('ready').textContent='OCR test remains available; reload to retry Google'});
 }
