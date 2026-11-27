@@ -6,7 +6,7 @@ import shutil
 import tempfile
 from verify_ocr import verify
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-PUBLIC=("index.html","style.css","app.js","backup.js","ocr.js","extensions.js","extension-ui.js","share.js","calendar-sync.js","media-backup.js","planner.js","planner-ui.js","core.js","storage.js","cloud.js","sw.js","manifest.webmanifest","icon-192.png","icon-512.png","icon-maskable.png")
+PUBLIC=("index.html","style.css","app.js","backup.js","ocr.js","gmail-discovery.js","extensions.js","extension-ui.js","share.js","calendar-sync.js","media-backup.js","planner.js","planner-ui.js","core.js","storage.js","cloud.js","sw.js","manifest.webmanifest","icon-192.png","icon-512.png","icon-maskable.png")
 verify()
 with tempfile.TemporaryDirectory(prefix="liftlog-release-") as tmp:
     stage=pathlib.Path(tmp)/"site";stage.mkdir()
