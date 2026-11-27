@@ -12,7 +12,10 @@ with sync_playwright() as p:
  page.locator('[data-x="dashboard-edit"]').click()
  page.locator('[data-x="dashboard-toggle"][data-id="calendar"]').click()
  page.locator('[data-x="dashboard-up"][data-id="calendar"]').click()
- page.wait_for_function("Array.from(document.querySelectorAll('[data-x=dashboard-go]')).map(e=>e.dataset.id).join(',')==='start-workout,new-note,calendar,new-meal'")
+ from playwright.sync_api import expect
+ expect(page.locator('[data-x="dashboard-go"]')).to_have_count(4)
+ for i, key in enumerate(['start-workout','new-note','calendar','new-meal']):
+  expect(page.locator('[data-x="dashboard-go"]').nth(i)).to_have_attribute('data-id',key)
  page.locator('#status').get_by_text('Saved locally',exact=True).wait_for()
  page.reload()
  page.get_by_role('heading',name='Personal dashboard').wait_for()
