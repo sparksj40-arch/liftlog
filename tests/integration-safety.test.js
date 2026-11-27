@@ -4,6 +4,23 @@ import * as C from '../core.js';
 import * as X from '../extensions.js';
 import * as P from '../planner.js';
 import * as G from '../cloud.js';
+import * as GC from '../calendar-sync.js';
+
+test('Calendar authorization rejects invalid scope, expiry and cancelled callbacks',async()=>{
+ const scope=GC.SCOPE,client='test.apps.googleusercontent.com';
+ let callback;
+ globalThis.window={google:{accounts:{oauth2:{}}}};
+ globalThis.google={accounts:{oauth2:{initTokenClient:o=>{callback=o.callback;return {requestAccessToken:()=>{}}}}}};
+ const begin=async()=>{callback=null;const p=GC.authorize(client);await new Promise(r=>setImmediate(r));return {p}};
+ try{
+  let {p}=await begin();callback({access_token:'test',expires_in:3600,scope:'wrong'});await assert.rejects(p,/permission/);
+  ({p}=await begin());callback({access_token:'test',expires_in:1,scope});await assert.rejects(p,/lifetime/);
+  ({p}=await begin());await assert.rejects(GC.authorize(client),/already open/);GC.disconnect();callback({access_token:'test',expires_in:3600,scope});await assert.rejects(p,/cancelled/);assert.equal(GC.authorized(),false);
+  ({p}=await begin());callback({access_token:'test',expires_in:3600,scope});await p;assert.ok(GC.authorizationStatus().expiresAt>Date.now());
+  globalThis.fetch=async()=>({ok:false,status:401,json:async()=>({})});
+  await assert.rejects(GC.createCalendar('America/Detroit'),/401/);assert.equal(GC.authorized(),false);
+ }finally{GC.disconnect();delete globalThis.window;delete globalThis.google;delete globalThis.fetch}
+});
 
 function subscription(db,id='one',sources=['email-1'],extra={}){
  return P.saveSubscription(db,{id,company:'Synthetic service',description:'Original plan',amount:12,currency:'USD',frequency:'monthly',status:'trial',intent:'trial',start:'2026-11-01',renewal:'2026-12-01',trialEnd:'2026-12-01',promoEnd:'',deadline:'2026-11-29',cancelDate:'',instructions:'Original instructions',sources,reminderDays:[7,3,1,0],...extra});
